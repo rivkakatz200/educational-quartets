@@ -1,0 +1,6 @@
+{
+  "name": "רביעיות לימודיות - משחק קלפים בזמן אמת",
+  "description": "משחק רביעיות לימודי מרובה משתתפים בזמן אמת עם עיבוד חומר לימוד ב-AI, סנכרון מיידי וצ'אט חי",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

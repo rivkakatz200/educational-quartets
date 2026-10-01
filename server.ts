@@ -7,6 +7,8 @@ import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
 import { PREDEFINED_DECKS } from './src/data/defaultDecks.ts';
+import multer from 'multer';
+import fs from 'fs';
 
 dotenv.config();
 
@@ -95,6 +97,7 @@ interface Room {
   winnerId: string | null;
   messages: ChatMessage[];
   createdAt: number;
+  lockedGroupId: string | null;
 }
 
 
@@ -227,6 +230,7 @@ function broadcastRoomState(room: Room) {
         winnerId: room.winnerId,
         messages: room.messages,
         createdAt: room.createdAt,
+        lockedGroupId: room.lockedGroupId || null,
         self: {
           id: player.id,
           name: player.name,
@@ -262,10 +266,54 @@ async function startServer() {
 
   app.use(express.json());
 
+  // File upload (PDF/TXT) for AI study material extraction
+  const upload = multer({ dest: '/tmp/uploads/', limits: { fileSize: 5 * 1024 * 1024 } });
+
+  app.post('/api/extract-file-text', upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'לא הועלה קובץ' });
+      const { mimetype, path: filePath, originalname } = req.file;
+
+      let text = '';
+      if (mimetype === 'text/plain' || originalname.endsWith('.txt') || originalname.endsWith('.md')) {
+        text = fs.readFileSync(filePath, 'utf-8');
+      } else if (mimetype === 'application/pdf' || originalname.endsWith('.pdf')) {
+        // Basic PDF text extraction: read raw bytes and extract readable ASCII strings
+        const buf = fs.readFileSync(filePath);
+        const raw = buf.toString('latin1');
+        // Extract text between BT/ET markers or just grab printable sequences
+        const matches = raw.match(/[\x20-\x7E\u0590-\u05FF]{4,}/g) || [];
+        text = matches
+          .filter((s) => s.trim().length > 3 && !/^[\x00-\x1F]+$/.test(s))
+          .join(' ')
+          .slice(0, 8000);
+      } else {
+        // Try reading as UTF-8 for .docx-like or unknown text formats
+        try {
+          text = fs.readFileSync(filePath, 'utf-8').slice(0, 8000);
+        } catch {
+          return res.status(400).json({ error: 'סוג קובץ לא נתמך. אנא העלה קובץ TXT או PDF.' });
+        }
+      }
+
+      fs.unlinkSync(filePath);
+
+      if (!text || text.trim().length < 20) {
+        return res.status(400).json({ error: 'לא ניתן לחלץ טקסט מהקובץ. נסה קובץ TXT.' });
+      }
+
+      res.json({ text: text.trim().slice(0, 8000) });
+    } catch (err: any) {
+      console.error('File extraction error:', err);
+      res.status(500).json({ error: 'שגיאה בעיבוד הקובץ' });
+    }
+  });
+
   // API to generate quartets from custom study material using Gemini
   app.post('/api/generate-quartets', async (req, res) => {
     try {
       const { topicOrText, count = 4 } = req.body;
+      const quartetCount = Math.min(Math.max(parseInt(String(count)) || 4, 2), 8);
       if (!topicOrText || typeof topicOrText !== 'string' || topicOrText.trim().length === 0) {
         return res.status(400).json({ error: 'נא להזין נושא או חומר לימוד' });
       }
@@ -276,7 +324,7 @@ async function startServer() {
 ${topicOrText.trim()}
 """
 
-עליך לנתח את חומר הלימוד וליצור ממנו בדיוק ${Math.min(Math.max(count, 3), 6)} רביעיות לימודיות (Quartets) בעברית צחה.
+עליך לנתח את חומר הלימוד וליצור ממנו בדיוק ${quartetCount} רביעיות לימודיות (Quartets) בעברית צחה.
 כללי המשחק:
 1. כל רביעייה (group) מייצגת קטגוריה או נושא משותף ברור (למשל: "איברי נשימה", "קרבות הכרעה", "מבני נתונים לינאריים", "שפות תכנות עיליות").
 2. כל רביעייה חייבת להכיל בדיוק 4 פריטים/קלפים (cards).
@@ -355,7 +403,7 @@ ${topicOrText.trim()}
             })),
           }));
 
-          const validGroups = formatted.filter((g) => g.cards.length === 4);
+          const validGroups = formatted.filter((g) => g.cards.length === 4).slice(0, quartetCount);
           if (validGroups.length >= 2) {
             return res.json({ quartets: validGroups });
           }
@@ -382,41 +430,27 @@ ${topicOrText.trim()}
 
       // Generate dynamic quartets based on user's topic words
       const topicName = topicOrText.slice(0, 30).trim();
-      const generatedQuartets: QuartetGroup[] = [
-        {
-          id: `dyn_g1_${Date.now()}`,
-          title: `יסודות ומושגי מפתח: ${topicName}`,
-          themeColor: colors[0],
-          cards: [
-            { id: 'dc_1_1', name: lines[0] || 'מושג יסוד 1', description: `עקרון מרכזי וחשוב מתוך חומר הלימוד: ${lines[0] || topicName}` },
-            { id: 'dc_1_2', name: lines[1] || 'מושג יסוד 2', description: `הגדרה מקיפה ותפקיד ראשי בנושא הנלמד.` },
-            { id: 'dc_1_3', name: lines[2] || 'מושג יסוד 3', description: `מאפיין מהותי המשמש להבנת התחום.` },
-            { id: 'dc_1_4', name: lines[3] || 'מושג יסוד 4', description: `דוגמה מעשית ויישום מרכזי של החומר.` },
-          ],
-        },
-        {
-          id: `dyn_g2_${Date.now()}`,
-          title: `עקרונות מתקדמים ויישומים`,
-          themeColor: colors[1],
-          cards: [
-            { id: 'dc_2_1', name: lines[4] || 'עיקרון פעולה', description: `הסבר מעמיק על אופן הפעולה והשלכותיו.` },
-            { id: 'dc_2_2', name: lines[5] || 'מנגנון מרכזי', description: `תהליך עיקרי או נוסחה המאפיינת את הנושא.` },
-            { id: 'dc_2_3', name: lines[6] || 'גורם משפיע', description: `משתנה קריטי המשפיע על תוצאות המערכת.` },
-            { id: 'dc_2_4', name: lines[7] || 'מסקנה לימודית', description: `תובנה מרכזית הנדרשת לבחינה או ליישום.` },
-          ],
-        },
-        {
-          id: `dyn_g3_${Date.now()}`,
-          title: `היבטים משלימים וחקר`,
-          themeColor: colors[2],
-          cards: [
-            { id: 'dc_3_1', name: lines[8] || 'שלב ראשוני', description: `התפתחות מוקדמת או רקע היסטורי חשוב.` },
-            { id: 'dc_3_2', name: lines[9] || 'גורם מקשר', description: `הקשר בין מושג זה לשאר פרקי הלימוד.` },
-            { id: 'dc_3_3', name: lines[10] || 'דוגמת בוחן', description: `שאלה אופיינית ונקודת מפתח שכדאי לזכור.` },
-            { id: 'dc_3_4', name: lines[11] || 'סיכום מסגרת', description: `ריכוז כלל המרכיבים לפתרון תרגילים בנושא.` },
-          ],
-        },
+      const groupTemplates = [
+        { title: `יסודות ומושגי מפתח: ${topicName}`, color: colors[0], offset: 0 },
+        { title: `עקרונות מתקדמים ויישומים`, color: colors[1], offset: 4 },
+        { title: `היבטים משלימים וחקר`, color: colors[2], offset: 8 },
+        { title: `סיכום ומסקנות`, color: colors[3], offset: 12 },
+        { title: `דוגמאות ויישומים מעשיים`, color: colors[4], offset: 16 },
+        { title: `מושגים מתקדמים`, color: colors[5], offset: 20 },
+        { title: `השוואות וניגודים`, color: colors[6], offset: 24 },
+        { title: `רקע היסטורי והקשר`, color: colors[7], offset: 28 },
       ];
+
+      const generatedQuartets: QuartetGroup[] = groupTemplates.slice(0, quartetCount).map((tmpl, gIdx) => ({
+        id: `dyn_g${gIdx + 1}_${Date.now()}`,
+        title: tmpl.title,
+        themeColor: tmpl.color,
+        cards: Array.from({ length: 4 }, (_, cIdx) => ({
+          id: `dc_${gIdx}_${cIdx}`,
+          name: lines[tmpl.offset + cIdx] || `מושג ${tmpl.offset + cIdx + 1}`,
+          description: `פריט לימודי מרכזי מתוך חומר הלימוד.`,
+        })),
+      }));
 
       return res.json({ quartets: generatedQuartets });
     } catch (err: any) {
@@ -487,6 +521,7 @@ ${topicOrText.trim()}
               },
             ],
             createdAt: Date.now(),
+            lockedGroupId: null,
           };
 
           rooms.set(roomCode, room);
@@ -807,9 +842,10 @@ ${topicOrText.trim()}
               drawNote = ` ${asker.name} קיבל קלפים בתור זה ולכן אינו מושך מהקופה.`;
             }
 
-            // Turn passes to opponent! Reset cardsReceivedThisTurn for next turn.
+            // Turn passes to opponent! Reset cardsReceivedThisTurn and lockedGroupId for next turn.
             room.turnPlayerId = player.id;
             room.cardsReceivedThisTurn = 0;
+            room.lockedGroupId = null;
             room.lastAction = `❌ ל-${player.name} אין קלפים מסדרת '${groupTitle}'.${drawNote} התור עבר ל-${player.name}.`;
 
             room.messages.push({
@@ -843,6 +879,17 @@ ${topicOrText.trim()}
           }
 
           const { targetGroupId, targetCardName } = message;
+
+          // Feature 4: If player already received cards this turn, they must stay in the same series
+          if ((room.cardsReceivedThisTurn || 0) > 0 && room.lockedGroupId && targetGroupId !== room.lockedGroupId) {
+            const lockedGroup = room.quartets.find((q) => q.id === room.lockedGroupId);
+            ws.send(JSON.stringify({
+              type: 'error',
+              message: `לאחר קבלת קלף, עליך להמשיך לשאול רק מסדרת "${lockedGroup?.title || ''}" עד שתמצה אותה!`,
+            }));
+            return;
+          }
+
           const opponentId = room.playerOrder.find((id) => id !== player.id);
           if (!opponentId) return;
           const opponent = room.players[opponentId];
@@ -897,10 +944,15 @@ ${topicOrText.trim()}
             const [transferredCard] = player.hand.splice(cardIndex, 1);
             asker.hand.push(transferredCard);
 
-            // Requirement 3: Consecutive Asking Rule on Success:
-            // "If the opponent successfully has and transfers the requested card, the asking player's turn continues.
-            // The player can then choose to ask again (either for another sub-category in the same category or a new one) and continue taking turns as long as they successfully receive cards."
+            // Feature 4: Lock the asker to this series until opponent has no more cards in it
             room.cardsReceivedThisTurn = (room.cardsReceivedThisTurn || 0) + 1;
+            room.lockedGroupId = room.activeAsk!.targetGroupId;
+
+            // Check if opponent still has cards in this series; if not, unlock
+            const opponentStillHasInGroup = player.hand.some((c) => c.groupId === room.lockedGroupId);
+            if (!opponentStillHasInGroup) {
+              room.lockedGroupId = null;
+            }
 
             room.activeAsk.status = 'success';
             room.activeAsk.resultMessage = `הקלף '${transferredCard.name}' נמסר בהצלחה! ${asker.name} ממשיך בתורו.`;
@@ -952,9 +1004,10 @@ ${topicOrText.trim()}
               drawnCardInfo = ` ${asker.name} כבר קיבל ${room.cardsReceivedThisTurn} קלפים בתור זה ולכן אינו מושך מהקופה.`;
             }
 
-            // Turn switches to opponent! Reset cardsReceivedThisTurn for opponent's fresh turn.
+            // Turn switches to opponent! Reset cardsReceivedThisTurn and lockedGroupId for opponent's fresh turn.
             room.turnPlayerId = player.id;
             room.cardsReceivedThisTurn = 0;
+            room.lockedGroupId = null;
             room.lastAction = `❌ ל-${player.name} אין את הקלף המבוקש.${drawnCardInfo} התור עבר ל-${player.name}.`;
 
             room.messages.push({
@@ -1047,6 +1100,7 @@ ${topicOrText.trim()}
           room.activeAsk = null;
           room.turnPlayerId = room.playerOrder[0];
           room.cardsReceivedThisTurn = 0;
+          room.lockedGroupId = null;
           room.lastAction = 'המשחק אותחל מחדש! לחצו על הקופה למשיכת 4 קלפים.';
 
           room.messages.push({

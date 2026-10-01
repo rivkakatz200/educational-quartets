@@ -22,6 +22,7 @@ export default function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const prevQuartetsCount = useRef<number>(0);
+  const pendingRoomJoin = useRef<{ code: string; name: string } | null>(null);
 
   const showToast = useCallback((message: string, type: 'info' | 'error' | 'success' = 'info') => {
     setToast({ message, type });
@@ -45,6 +46,12 @@ export default function App() {
     socket.onopen = () => {
       setIsConnected(true);
       console.log('Connected to real-time game server');
+      // Auto-join from URL ?room=CODE once connected
+      if (pendingRoomJoin.current) {
+        const { code, name } = pendingRoomJoin.current;
+        pendingRoomJoin.current = null;
+        socket.send(JSON.stringify({ type: 'room:join', roomCode: code, playerName: name }));
+      }
     };
 
     socket.onmessage = (event) => {
@@ -52,6 +59,12 @@ export default function App() {
         const data = JSON.parse(event.data);
         if (data.type === 'room:state') {
           const newRoom: RoomState = data.room;
+          // Update URL to reflect current room
+          const url = new URL(window.location.href);
+          if (newRoom.code && url.searchParams.get('room') !== newRoom.code) {
+            url.searchParams.set('room', newRoom.code);
+            window.history.replaceState({}, '', url.toString());
+          }
 
           // Sound triggers on game events
           if (newRoom.self) {
@@ -93,11 +106,13 @@ export default function App() {
   useEffect(() => {
     connectWebSocket();
 
-    // Check URL parameters for ?room=CODE
+    // Check URL parameters for ?room=CODE — queue auto-join
     const urlParams = new URLSearchParams(window.location.search);
     const roomParam = urlParams.get('room');
     if (roomParam) {
-      showToast(`נמצא קוד חדר בהזמנה: ${roomParam.toUpperCase()}`, 'info');
+      const savedName = (() => { try { return localStorage.getItem('reviyot_player_name') || ''; } catch { return ''; } })();
+      pendingRoomJoin.current = { code: roomParam.toUpperCase(), name: savedName || 'שחקן' };
+      showToast(`מצטרף אוטומטית לחדר ${roomParam.toUpperCase()}...`, 'info');
     }
 
     return () => {
@@ -192,11 +207,9 @@ export default function App() {
   const handleLeaveRoom = () => {
     setRoomState(null);
     prevQuartetsCount.current = 0;
-    // reset url if had ?room=
-    if (window.history.pushState) {
-      const newurl = window.location.protocol + '//' + window.location.host + window.location.pathname;
-      window.history.pushState({ path: newurl }, '', newurl);
-    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete('room');
+    window.history.pushState({}, '', url.toString());
   };
 
   return (

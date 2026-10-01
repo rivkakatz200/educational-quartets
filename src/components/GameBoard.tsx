@@ -51,7 +51,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
   const [inspectCard, setInspectCard] = useState<Card | null>(null);
   const [isChatOpen, setIsChatOpen] = useState(true);
 
-  const { self, opponent, status, turnPlayerId, deckCount, quartets, activeAsk, lastAction, cardsReceivedThisTurn } =
+  const { self, opponent, status, turnPlayerId, deckCount, quartets, activeAsk, lastAction, cardsReceivedThisTurn, lockedGroupId } =
     roomState;
 
   if (!self) return null;
@@ -126,6 +126,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
         opponentName={opponent?.name || 'היריב'}
         activeAsk={activeAsk}
         currentUserId={self.id}
+        lockedGroupId={lockedGroupId}
         onAskCategory={onAskCategory}
         onAskSpecificCard={onAskSpecificCard}
       />

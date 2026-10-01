@@ -11,6 +11,7 @@ interface AskCardModalProps {
   opponentName: string;
   activeAsk: CardAskRequest | null;
   currentUserId: string;
+  lockedGroupId?: string | null;
   onAskCategory: (targetGroupId: string) => void;
   onAskSpecificCard: (targetGroupId: string, targetCardName: string) => void;
 }
@@ -23,6 +24,7 @@ export const AskCardModal: React.FC<AskCardModalProps> = ({
   opponentName,
   activeAsk,
   currentUserId,
+  lockedGroupId,
   onAskCategory,
   onAskSpecificCard,
 }) => {
@@ -40,7 +42,17 @@ export const AskCardModal: React.FC<AskCardModalProps> = ({
 
   // Find unique series that the player currently holds at least 1 card of
   const ownedGroupIds = Array.from(new Set(playerHand.map((c) => c.groupId)));
-  const ownedQuartets = allQuartets.filter((q) => ownedGroupIds.includes(q.id));
+  // Feature 4: If locked to a series, only show that series
+  const ownedQuartets = allQuartets.filter((q) =>
+    ownedGroupIds.includes(q.id) && (!lockedGroupId || q.id === lockedGroupId)
+  );
+
+  // Auto-select locked group
+  useEffect(() => {
+    if (lockedGroupId && isOpen) {
+      setSelectedGroupId(lockedGroupId);
+    }
+  }, [lockedGroupId, isOpen]);
 
   // Determine which step we are currently in
   const isWaitingCategoryResponse =
@@ -101,11 +113,17 @@ export const AskCardModal: React.FC<AskCardModalProps> = ({
             </div>
             <div>
               <h3 className="font-extrabold text-white text-base">
-                {isReadyForStep2 ? 'שלב 2 מתוך 2: בחירת קלף ספציפי' : 'שאלת קלף מהיריב (ב-2 שלבים)'}
+                {isReadyForStep2
+                  ? 'שלב 2 מתוך 2: בחירת קלף ספציפי'
+                  : lockedGroupId
+                  ? 'שאלת קלף — נעול לסדרה הנוכחית'
+                  : 'שאלת קלף מהיריב (ב-2 שלבים)'}
               </h3>
               <p className="text-[11px] text-slate-400">
                 {isReadyForStep2
                   ? `${opponentName} אישר שיש לו מהסדרה! כעת בחר איזה קלף לבקש.`
+                  : lockedGroupId
+                  ? `קיבלת קלף מהסדרה הזו — חייב להמשיך לשאול מאותה סדרה עד שתמצה.`
                   : `שלב 1: שואלים האם יש ליריב קלפים מהסדרה.`}
               </p>
             </div>
@@ -123,6 +141,11 @@ export const AskCardModal: React.FC<AskCardModalProps> = ({
           {/* STEP 1: Select general category / theme */}
           {!isReadyForStep2 && !isWaitingCategoryResponse && (
             <form onSubmit={handleStep1Submit} className="space-y-4">
+              {lockedGroupId && (
+                <div className="bg-amber-950/40 border border-amber-500/40 rounded-xl p-3 text-xs text-amber-200">
+                  <span className="font-bold">🔒 נעול לסדרה:</span> קיבלת קלף מהסדרה הזו בתור הנוכחי. עליך להמשיך לשאול רק מאותה סדרה עד שליריב ייגמרו את כל קלפיה ממנה.
+                </div>
+              )}
               <div className="bg-indigo-950/40 border border-indigo-500/30 rounded-xl p-3 text-xs text-indigo-200">
                 <div className="font-bold flex items-center gap-1.5 mb-1 text-white">
                   <span className="w-4 h-4 rounded-full bg-indigo-500 text-white flex items-center justify-center text-[10px]">

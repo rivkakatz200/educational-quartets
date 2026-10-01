@@ -66,7 +66,8 @@ export interface RoomState {
   deckCount: number;
   turnPlayerId: string;
   playerOrder: string[];
-  cardsReceivedThisTurn: number; // מעקב אחר קבלת קלפים בתור הנוכחי (לחוק משיכת קופה בסיום תור)
+  cardsReceivedThisTurn: number;
+  lockedGroupId: string | null;
   activeAsk: CardAskRequest | null;
   lastAction: string | null;
   winnerId: string | null;

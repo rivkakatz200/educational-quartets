@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Sparkles, Users, Key, Play, Plus, BookOpen, Layers, CheckCircle2, Copy, Check, RefreshCw, Wand2, ChevronRight, Edit3, Trash2 } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Sparkles, Users, Key, Play, Plus, BookOpen, Layers, CheckCircle2, Copy, Check, RefreshCw, Wand2, ChevronRight, Edit3, Trash2, Upload, FileText } from 'lucide-react';
 import { PREDEFINED_DECKS, PredefinedDeck } from '../data/defaultDecks';
 import { QuartetGroup } from '../types/game';
 import { sounds } from '../utils/sound';
@@ -42,6 +42,9 @@ export const Lobby: React.FC<LobbyProps> = ({
   const [selectedPresetId, setSelectedPresetId] = useState<string>(PREDEFINED_DECKS[0].id);
   const [customText, setCustomText] = useState('');
   const [isAiGenerating, setIsAiGenerating] = useState(false);
+  const [quartetCount, setQuartetCount] = useState(4);
+  const [isExtractingFile, setIsExtractingFile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [customQuartets, setCustomQuartets] = useState<QuartetGroup[]>(PREDEFINED_DECKS[0].quartets);
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -66,6 +69,27 @@ export const Lobby: React.FC<LobbyProps> = ({
     setErrorMsg(null);
   };
 
+  // Extract text from uploaded file
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsExtractingFile(true);
+    setErrorMsg(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/extract-file-text', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'שגיאה בעיבוד הקובץ');
+      setCustomText(data.text);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'שגיאה בטעינת הקובץ');
+    } finally {
+      setIsExtractingFile(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   // Generate quartets using AI
   const handleGenerateWithAi = async () => {
     if (!customText.trim()) {
@@ -80,7 +104,7 @@ export const Lobby: React.FC<LobbyProps> = ({
       const res = await fetch('/api/generate-quartets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topicOrText: customText, count: 4 }),
+        body: JSON.stringify({ topicOrText: customText, count: quartetCount }),
       });
 
       if (!res.ok) {
@@ -493,6 +517,33 @@ export const Lobby: React.FC<LobbyProps> = ({
                           מעובד אוטומטית לרביעיות
                         </span>
                       </div>
+
+                      {/* File Upload */}
+                      <div className="mb-2">
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept=".txt,.pdf,.md"
+                          onChange={handleFileUpload}
+                          className="hidden"
+                          id="file-upload"
+                        />
+                        <label
+                          htmlFor="file-upload"
+                          className={`flex items-center justify-center gap-2 w-full py-2 rounded-xl border border-dashed cursor-pointer text-xs font-semibold transition-all ${
+                            isExtractingFile
+                              ? 'border-indigo-500/50 bg-indigo-950/30 text-indigo-300 cursor-wait'
+                              : 'border-slate-600 bg-slate-800/50 text-slate-400 hover:border-indigo-500/60 hover:text-indigo-300 hover:bg-indigo-950/20'
+                          }`}
+                        >
+                          {isExtractingFile ? (
+                            <><RefreshCw className="w-3.5 h-3.5 animate-spin" /><span>מחלץ טקסט מהקובץ...</span></>
+                          ) : (
+                            <><Upload className="w-3.5 h-3.5" /><span>העלה קובץ (PDF / TXT)</span><FileText className="w-3 h-3 text-slate-500" /></>
+                          )}
+                        </label>
+                      </div>
+
                       <textarea
                         rows={4}
                         value={customText}
@@ -500,6 +551,28 @@ export const Lobby: React.FC<LobbyProps> = ({
                         placeholder="למשל: סיכום בהיסטוריה על מלחמת העולם השנייה, מושגים בכימיה אורגנית, מילים בפסיכומטרי, דיני חוזים במשפטים..."
                         className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-sm leading-relaxed"
                       />
+                    </div>
+
+                    {/* Quartet Count Selector */}
+                    <div className="flex items-center gap-3">
+                      <label className="text-xs font-semibold text-slate-300 whitespace-nowrap">מספר סדרות ליצירה:</label>
+                      <div className="flex gap-1">
+                        {[2, 3, 4, 5, 6, 7, 8].map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() => setQuartetCount(n)}
+                            className={`w-7 h-7 rounded-lg text-xs font-bold transition-all ${
+                              quartetCount === n
+                                ? 'bg-indigo-600 text-white shadow-md'
+                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white border border-slate-700'
+                            }`}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                      <span className="text-[11px] text-slate-500">({quartetCount * 4} קלפים)</span>
                     </div>
 
                     <button
@@ -520,7 +593,7 @@ export const Lobby: React.FC<LobbyProps> = ({
                       ) : (
                         <>
                           <Wand2 className="w-4 h-4 text-amber-300" />
-                          <span>צור רביעיות לימודיות באמצעות AI</span>
+                          <span>צור {quartetCount} רביעיות לימודיות באמצעות AI</span>
                         </>
                       )}
                     </button>

@@ -11,7 +11,7 @@ import { GameBoard } from './components/GameBoard';
 import { RoomState, QuartetGroup } from './types/game';
 import { sounds } from './utils/sound';
 import confetti from 'canvas-confetti';
-import { AlertCircle, CheckCircle2 } from 'lucide-react';
+import { AlertCircle, CheckCircle2, LogIn, User } from 'lucide-react';
 
 export default function App() {
   const [roomState, setRoomState] = useState<RoomState | null>(null);
@@ -19,10 +19,13 @@ export default function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'info' | 'error' | 'success' } | null>(null);
 
+  const [linkRoomCode, setLinkRoomCode] = useState<string | null>(null);
+  const [linkNameInput, setLinkNameInput] = useState('');
+  const [linkNameError, setLinkNameError] = useState('');
+
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const prevQuartetsCount = useRef<number>(0);
-  const pendingRoomJoin = useRef<{ code: string; name: string } | null>(null);
 
   const showToast = useCallback((message: string, type: 'info' | 'error' | 'success' = 'info') => {
     setToast({ message, type });
@@ -46,12 +49,6 @@ export default function App() {
     socket.onopen = () => {
       setIsConnected(true);
       console.log('Connected to real-time game server');
-      // Auto-join from URL ?room=CODE once connected
-      if (pendingRoomJoin.current) {
-        const { code, name } = pendingRoomJoin.current;
-        pendingRoomJoin.current = null;
-        socket.send(JSON.stringify({ type: 'room:join', roomCode: code, playerName: name }));
-      }
     };
 
     socket.onmessage = (event) => {
@@ -106,20 +103,20 @@ export default function App() {
   useEffect(() => {
     connectWebSocket();
 
-    // Check URL parameters for ?room=CODE — queue auto-join
+    // Detect ?room=CODE in URL — show name prompt instead of auto-joining
     const urlParams = new URLSearchParams(window.location.search);
     const roomParam = urlParams.get('room');
     if (roomParam) {
       const savedName = (() => { try { return localStorage.getItem('reviyot_player_name') || ''; } catch { return ''; } })();
-      pendingRoomJoin.current = { code: roomParam.toUpperCase(), name: savedName || 'שחקן' };
-      showToast(`מצטרף אוטומטית לחדר ${roomParam.toUpperCase()}...`, 'info');
+      setLinkRoomCode(roomParam.toUpperCase());
+      setLinkNameInput(savedName);
     }
 
     return () => {
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (wsRef.current) wsRef.current.close();
     };
-  }, [connectWebSocket, showToast]);
+  }, [connectWebSocket]);
 
   // Send message helper
   const sendSocketMessage = useCallback((payload: Record<string, any>) => {
@@ -206,10 +203,21 @@ export default function App() {
 
   const handleLeaveRoom = () => {
     setRoomState(null);
+    setLinkRoomCode(null);
     prevQuartetsCount.current = 0;
     const url = new URL(window.location.href);
     url.searchParams.delete('room');
     window.history.pushState({}, '', url.toString());
+  };
+
+  const handleLinkJoinSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = linkNameInput.trim();
+    if (!name) { setLinkNameError('נא להזין שם לפני הכניסה'); return; }
+    try { localStorage.setItem('reviyot_player_name', name); } catch {}
+    setLinkNameError('');
+    sendSocketMessage({ type: 'room:join', roomCode: linkRoomCode!, playerName: name });
+    setLinkRoomCode(null);
   };
 
   return (
@@ -251,6 +259,52 @@ export default function App() {
         onOpenRules={() => setRulesOpen(true)}
         onLeaveRoom={roomState ? handleLeaveRoom : undefined}
       />
+
+      {/* Direct-link name prompt — shown when ?room=CODE is in URL and user hasn't joined yet */}
+      {linkRoomCode && !roomState && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/95 backdrop-blur-sm p-4" dir="rtl">
+          <form
+            onSubmit={handleLinkJoinSubmit}
+            className="w-full max-w-sm bg-slate-900 border border-slate-700 rounded-2xl p-6 shadow-2xl flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-200"
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-indigo-500/20 border border-indigo-500/30">
+                <LogIn className="w-5 h-5 text-indigo-400" />
+              </div>
+              <div>
+                <h2 className="font-extrabold text-white text-base">הצטרפות לחדר משחק</h2>
+                <p className="text-xs text-slate-400">קוד חדר: <span className="font-mono font-bold text-amber-300">{linkRoomCode}</span></p>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-300 mb-1.5">השם שלך במשחק:</label>
+              <div className="relative">
+                <User className="w-4 h-4 text-slate-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  autoFocus
+                  maxLength={20}
+                  value={linkNameInput}
+                  onChange={(e) => { setLinkNameInput(e.target.value); setLinkNameError(''); }}
+                  placeholder="למשל: נועה, דניאל, רועי..."
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl pr-9 pl-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm"
+                />
+              </div>
+              {linkNameError && <p className="text-rose-400 text-xs mt-1.5 font-semibold">{linkNameError}</p>}
+            </div>
+
+            <button
+              type="submit"
+              disabled={!isConnected}
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-extrabold text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-600/30 active:scale-95"
+            >
+              <LogIn className="w-4 h-4" />
+              {isConnected ? 'כניסה לחדר המשחק' : 'מתחבר לשרת...'}
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* Main View: Single screen layout (Lobby or GameBoard) */}
       <main className="flex-1 min-h-0 overflow-hidden">
